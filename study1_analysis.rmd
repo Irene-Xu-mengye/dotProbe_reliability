@@ -1,0 +1,591 @@
+---
+title: "Reliability of the Emotional Dot Probe Task in Study 1"
+---
+
+**STUDY 1: The goal of this file is to analyze the reliability of the 36 digital versions of the Threat Dot Probe Task administered in Study 1. **    
+
+```{r set-up, include = FALSE, message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+library(tidyverse)
+library(ggpmisc)
+library(spearmanCI)
+# define colors we use for visualization
+colors <- c("#0C7BDC", "coral", "deepskyblue3")
+
+# Load processed data
+# naming convention: s1 - study 1
+# Outcome/person level data (one row per participant)
+s1.all.outcomes <- read_csv("data/study1/openData_study1_outcomes_032523.csv")
+# Trial level data (48 rows per participant) -> to calculate split half correlation and reliability
+s1.all.trials <- read_csv("data/study1/openData_study1_trials_032523.csv")
+```
+
+
+# 1. Quality Control
+After excluding participants that failed data quality control filters (N = 34 with accuracy < 60% or median RTc < 300 ms, Germine et al., 2022), the total sample was 7760 with between 176 to 276 participants completing each version.
+
+```{r quality-control}
+# Exclude participants with medRTc < 300 ms or accuracy < 60%
+s1.outcomes <- s1.all.outcomes %>%
+  filter(all_accuracy >= 0.6 & all_medRTc >= 300)
+s1.excluded.id <- s1.all.outcomes[s1.all.outcomes$all_accuracy < 0.6 | s1.all.outcomes$all_medRTc < 300,]$id
+
+# Total N included in analysis = 7760
+nrow(s1.outcomes) 
+# N excluded = 34
+nrow(s1.all.outcomes) - nrow(s1.outcomes)
+
+# Minimum and maximum N for each test version, test_id 6: N = 176, test_id 11: N = 276
+s1.outcomes %>% 
+  group_by(test_id) %>% 
+  summarise(n = n()) %>% 
+  arrange(n) %>%
+  filter(row_number() == 1 | row_number() == n())
+```
+
+
+```{r process-trial-data, include = FALSE}
+# condition 1: Threat congruent trials
+# condition 2: Threat incongruent trials
+# condition 3: Both threat trials
+# condition 4: Both neutral trials
+s1.parsed.trials <- s1.all.trials %>%
+  # exclude participants who failed quality control criteria
+  filter(!(id %in% s1.excluded.id) & condition != "practice") %>%
+  mutate(rt = as.numeric(rt),
+         correct = as.numeric(correct)) %>%
+  group_by(id) %>%
+  mutate(
+    # number the trials (mixed among all conditions) 
+    trial.all.cond = row_number(), 
+    # label whether each trial is an odd (1) or even (2) trial (mixed among all conditions)
+    half.all.cond = ifelse(trial.all.cond %% 2 == 1, 1, 2)) %>%
+  group_by(id, condition) %>%
+  mutate(
+    # number the trials (within each condition)
+    trial.by.cond = row_number(),
+    # label whether each trial is an odd (1) or even (2) trial (within each condition)
+    half.by.cond = ifelse(trial.by.cond %% 2 == 1, 1, 2))
+  
+# Calculate MEDIAN RT for odd and even trials (mixed among all conditions)
+s1.half.med.rt.all.cond <- s1.parsed.trials %>%
+  group_by(id, half.all.cond) %>%
+  summarise(half.med.rt.all = median(rt)) %>%
+  pivot_wider(names_from = half.all.cond, names_glue = "half.{half.all.cond}.rt", values_from = half.med.rt.all)
+
+# Calculate MEAN accuracy for odd and even trials (mixed among all conditions)
+s1.half.mean.acc.all.cond <- s1.parsed.trials %>%
+  group_by(id, half.all.cond) %>%
+  summarise(half.mean.acc.all = mean(correct)) %>%
+  pivot_wider(names_from = half.all.cond, names_glue = "half.{half.all.cond}.acc", values_from = half.mean.acc.all)
+
+s1.half.rt.acc.all.cond <- merge(s1.half.med.rt.all.cond, s1.half.mean.acc.all.cond, by = "id")
+
+# Calculate MEDIAN RT for odd and even trials (within each condition)
+s1.half.med.rt.by.cond <- s1.parsed.trials %>%
+  group_by(id, condition, half.by.cond) %>%
+  summarise(half.med.rt.by.cond = median(rt)) %>%
+  pivot_wider(names_from = c(condition, half.by.cond), 
+              names_glue = "cond{condition}.{half.by.cond}.rt", 
+              values_from = half.med.rt.by.cond) %>%
+  # Calculate the differences in median RT
+  mutate(TC.TIC.1.rt = cond1.1.rt - cond2.1.rt,
+         TC.TIC.2.rt = cond1.2.rt - cond2.2.rt,
+         TC.TT.1.rt = cond1.1.rt - cond3.1.rt,
+         TC.TT.2.rt = cond1.2.rt - cond3.2.rt,
+         TC.NN.1.rt = cond1.1.rt - cond4.1.rt,
+         TC.NN.2.rt = cond1.2.rt - cond4.2.rt)
+
+# Calculate MEAN accuracy for odd and even trials (within each condition)
+s1.half.mean.acc.by.cond <- s1.parsed.trials %>%
+  group_by(id, condition, half.by.cond) %>%
+  summarise(half.mean.rt.by.cond = mean(correct)) %>%
+  pivot_wider(names_from = c(condition, half.by.cond), 
+              names_glue = "cond{condition}.{half.by.cond}.acc", 
+              values_from = half.mean.rt.by.cond) %>%
+  # Calculate the differences in mean accuracy
+  mutate(TC.TIC.1.acc = cond1.1.acc - cond2.1.acc,
+         TC.TIC.2.acc = cond1.2.acc - cond2.2.acc,
+         TC.TT.1.acc = cond1.1.acc - cond3.1.acc,
+         TC.TT.2.acc = cond1.2.acc - cond3.2.acc,
+         TC.NN.1.acc = cond1.1.acc - cond4.1.acc,
+         TC.NN.2.acc = cond1.2.acc - cond4.2.acc)
+
+s1.half.rt.acc.by.cond <- merge(s1.half.med.rt.by.cond, s1.half.mean.acc.by.cond, by = "id")
+
+# Merge them into 1 df for convenience
+s1.half.stats <- merge(s1.half.rt.acc.all.cond, s1.half.rt.acc.by.cond, by = "id")
+
+s1.pt.info <- s1.outcomes %>% select(id, test_id, soa, imageType, orient, cond_num)
+s1.half.stats <- merge(s1.pt.info, s1.half.stats, by = "id")
+```
+
+
+```{r version-parameters}
+s1.v.params <- s1.outcomes %>%
+  group_by(test_id) %>%
+  filter(row_number() == 1) %>%
+  select(test_id, soa, imageType, orient, cond_num)
+```
+
+
+
+```{r correlation-by-version}
+# Split half PEARSON Correlation of threat facilitation RT scores, by version
+s1.rt.pearson <- s1.half.stats %>%
+  group_by(test_id) %>%
+  summarise(
+    n.rt.pearson = n(),
+    r.rt.pearson = cor(TC.TIC.1.rt, TC.TIC.2.rt),
+    r.rt.pearson.lower = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$conf.int[1], 2),
+    r.rt.pearson.upper = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$conf.int[2], 2),
+    rho.rt.pearson = ifelse(r.rt.pearson > 0, (2*r.rt.pearson)/(1+r.rt.pearson), 0), 
+    rho.rt.pearson.lower = round(ifelse(r.rt.pearson.lower > 0, (2*r.rt.pearson.lower)/(1+r.rt.pearson.lower), 0), 2),
+    rho.rt.pearson.upper = round(ifelse(r.rt.pearson.upper > 0, (2*r.rt.pearson.upper)/(1+r.rt.pearson.upper), 0), 2),
+    p.rt.pearson = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$p.value, 4),
+    p.rt.pearson.star = ifelse(p.rt.pearson < .001, "***",
+                        ifelse(p.rt.pearson < .01, "** ",
+                        ifelse(p.rt.pearson < .05, "*  ", "   "))))
+
+# Split half PEARSON Correlation of threat facilitation ACCURACY scores, by version
+s1.acc.pearson <- s1.half.stats %>%
+  group_by(test_id) %>%
+  summarise(
+    n.acc.pearson = n(),
+    r.acc.pearson = round(cor(TC.TIC.1.acc, TC.TIC.2.acc), 2),
+    r.acc.pearson.lower = round(cor.test(TC.TIC.1.acc, TC.TIC.2.acc)$conf.int[1], 2),
+    r.acc.pearson.upper = round(cor.test(TC.TIC.1.acc, TC.TIC.2.acc)$conf.int[2], 2),
+    rho.acc.pearson = round(ifelse(r.acc.pearson > 0, (2*r.acc.pearson)/(1+r.acc.pearson), 0), 2),
+    rho.acc.pearson.lower = round(ifelse(r.acc.pearson.lower > 0, (2*r.acc.pearson.lower)/(1+r.acc.pearson.lower), 0), 2),
+    rho.acc.pearson.upper = round(ifelse(r.acc.pearson.upper > 0, (2*r.acc.pearson.upper)/(1+r.acc.pearson.upper), 0), 2),
+    p.acc.pearson = round(cor.test(TC.TIC.1.acc, TC.TIC.2.acc)$p.value, 4),
+    p.acc.pearson.star = ifelse(p.acc.pearson < .001, "***",
+                         ifelse(p.acc.pearson < .01, "** ",
+                         ifelse(p.acc.pearson < .05, "*  ", "   "))))
+
+# Split half SPEARMAN Correlation of threat facilitation RT scores, for versions with sig Pearson correlation
+s1.rt.sig.test_ids <- s1.rt.pearson[s1.rt.pearson$p.rt.pearson < .05 & s1.rt.pearson$r.rt.pearson > 0,]$test_id
+s1.rt.spearman <- data.frame(
+  test_id = 1:36,
+  r.rt.spearman = NA, 
+  r.rt.spearman.lower = NA, 
+  r.rt.spearman.upper = NA,
+  p.rt.spearman = NA
+)
+for (i in s1.rt.sig.test_ids) {
+  s1.rt.spearman[i, 2] <- round(cor.test(s1.half.stats[s1.half.stats$test_id == i,]$TC.TIC.1.rt,
+                s1.half.stats[s1.half.stats$test_id == i,]$TC.TIC.2.rt, method = "spearman")$estimate, 2)
+  s1.rt.spearman[i, 5] <- round(cor.test(s1.half.stats[s1.half.stats$test_id == i,]$TC.TIC.1.rt,
+                s1.half.stats[s1.half.stats$test_id == i,]$TC.TIC.2.rt, method = "spearman")$p.value, 4)
+}
+
+# Split half SPEARMAN Correlation of threat facilitation ACCURACY scores, for versions with sig Pearson correlation
+s1.acc.sig.test_ids <- s1.acc.pearson[s1.acc.pearson$p.acc.pearson < .05 & s1.acc.pearson$r.acc.pearson > 0,]$test_id
+s1.acc.spearman <- data.frame(
+  test_id = 1:36,
+  r.acc.spearman = NA,
+  r.acc.spearman.lower = NA, 
+  r.acc.spearman.upper = NA,
+  p.acc.spearman = NA
+)
+for (i in s1.acc.sig.test_ids) {
+  s1.acc.spearman[i, 2] <- round(cor.test(s1.half.stats[s1.half.stats$test_id == i,]$TC.TIC.1.acc,
+                s1.half.stats[s1.half.stats$test_id == i,]$TC.TIC.2.acc, method = "spearman")$estimate, 2)
+  s1.acc.spearman[i, 5] <- round(cor.test(s1.half.stats[s1.half.stats$test_id == i,]$TC.TIC.1.acc,
+                s1.half.stats[s1.half.stats$test_id == i,]$TC.TIC.2.acc, method = "spearman")$p.value, 4)
+}
+
+# Split half SPEARMAN RT CI 
+# don't know how to store the outcome of spearmanCI into a table. So I'm manually adding them to the spearman table
+# spearmanCI(s1.half.stats[s1.half.stats$test_id == 1,]$TC.TIC.1.rt, 
+#            s1.half.stats[s1.half.stats$test_id == 1,]$TC.TIC.2.rt, level = 0.95, method = "Euclidean", plot = FALSE) # rho's CI [-0.003, 0.300]
+# spearmanCI(s1.half.stats[s1.half.stats$test_id == 10,]$TC.TIC.1.rt, 
+#            s1.half.stats[s1.half.stats$test_id == 10,]$TC.TIC.2.rt, level = 0.95, method = "Euclidean", plot = FALSE) # rho's CI [0.024, 0.307]
+# spearmanCI(s1.half.stats[s1.half.stats$test_id == 14,]$TC.TIC.1.rt, 
+#            s1.half.stats[s1.half.stats$test_id == 14,]$TC.TIC.2.rt, level = 0.95, method = "Euclidean", plot = FALSE) # rho's CI [0.002, 0.277]
+# spearmanCI(s1.half.stats[s1.half.stats$test_id == 15,]$TC.TIC.1.rt, 
+#            s1.half.stats[s1.half.stats$test_id == 15,]$TC.TIC.2.rt, level = 0.95, method = "Euclidean", plot = FALSE) # rho's CI [0.031, 0.332]
+s1.rt.spearman[1, 3] <- -.003
+s1.rt.spearman[1, 4] <- .300
+s1.rt.spearman[10, 3] <- .024
+s1.rt.spearman[10, 4] <- .307
+s1.rt.spearman[14, 3] <- .002
+s1.rt.spearman[14, 4] <- .277
+s1.rt.spearman[15, 3] <- .031
+s1.rt.spearman[15, 4] <- .332
+# Calculate rho's CI for the Spearman correlation of TF RT scores
+s1.rt.spearman <- s1.rt.spearman %>%
+  mutate(
+    rho.rt.spearman = round(ifelse(r.rt.spearman > 0, (2*r.rt.spearman)/(1+r.rt.spearman), 0), 2),
+    rho.rt.spearman.lower = round(ifelse(r.rt.spearman.lower > 0, (2*r.rt.spearman.lower)/(1+r.rt.spearman.lower), 0), 2),
+    rho.rt.spearman.upper = round(ifelse(r.rt.spearman.upper > 0, (2*r.rt.spearman.upper)/(1+r.rt.spearman.upper), 0), 2),
+  )
+
+# Split half SPEARMAN Accuracy CI 
+# spearmanCI(s1.half.stats[s1.half.stats$test_id == 11,]$TC.TIC.1.acc, 
+#            s1.half.stats[s1.half.stats$test_id == 11,]$TC.TIC.2.acc, level = 0.95, method = "Euclidean", plot = FALSE) # r's CI [-0.029, 0.278]
+# spearmanCI(s1.half.stats[s1.half.stats$test_id == 13,]$TC.TIC.1.acc, 
+#            s1.half.stats[s1.half.stats$test_id == 13,]$TC.TIC.2.acc, level = 0.95, method = "Euclidean", plot = FALSE) # r's CI [0.196, 0.532]
+# spearmanCI(s1.half.stats[s1.half.stats$test_id == 16,]$TC.TIC.1.acc, 
+#            s1.half.stats[s1.half.stats$test_id == 16,]$TC.TIC.2.acc, level = 0.95, method = "Euclidean", plot = FALSE) # r's CI [-0.006, 0.314]
+# spearmanCI(s1.half.stats[s1.half.stats$test_id == 25,]$TC.TIC.1.acc, 
+#            s1.half.stats[s1.half.stats$test_id == 25,]$TC.TIC.2.acc, level = 0.95, method = "Euclidean", plot = FALSE) # r's CI [0.027, 0.359]
+s1.acc.spearman[11, 3] <- -0.029
+s1.acc.spearman[11, 4] <- 0.278
+s1.acc.spearman[13, 3] <- 0.196
+s1.acc.spearman[13, 4] <- 0.532
+s1.acc.spearman[16, 3] <- -0.006
+s1.acc.spearman[16, 4] <- 0.314
+s1.acc.spearman[25, 3] <- 0.027
+s1.acc.spearman[25, 4] <- 0.359
+# Calculate rho's CI for the Spearman correlation of TF accuracy scores
+s1.acc.spearman <- s1.acc.spearman %>%
+  mutate(
+    rho.acc.spearman = round(ifelse(r.acc.spearman > 0, (2*r.acc.spearman)/(1+r.acc.spearman), 0), 2),
+    rho.acc.spearman.lower = round(ifelse(r.acc.spearman.lower > 0, (2*r.acc.spearman.lower)/(1+r.acc.spearman.lower), 0), 2),
+    rho.acc.spearman.upper = round(ifelse(r.acc.spearman.upper > 0, (2*r.acc.spearman.upper)/(1+r.acc.spearman.upper), 0), 2),
+  )
+```
+
+
+# 2. Descriptives and Demographics for the Whole Sample
+
+## 2.1 Demographics 
+
+Across the whole sample, the average age was 33.14 (SD = 16.35); 45.79% of participants identified as female, 52.01% identified as male, and 2.3% identified as nonbinary or gender queer. Of the total sample, 64.34% identified as European or White, 28.94% identified as Asian, 6.1% identified as African or Black, 2.71% identified as American Indian or Alaska Native, 1.01% identified as Native Hawiian or Pacific Islander, and 8.67% identified as Hispanic or Latino.
+
+```{r whole-sample-demographics}
+# Age M = 33.14, SD = 16.35 
+# (note that the statistics for age in this open access data file are slightly different from the original ages after we changed all participants whose ages were > 89 into 90 due to HIPPA rules) 
+round(mean(s1.outcomes$age, na.rm = T), 2)
+round(sd(s1.outcomes$age, na.rm = T), 2)
+
+# Gender
+round(nrow(s1.outcomes[s1.outcomes$gender == "female",])/nrow(s1.outcomes)*100, 2)      # Female: 45.76%
+round(nrow(s1.outcomes[s1.outcomes$gender == "genderqueer",])/nrow(s1.outcomes)*100, 2) # Queer: 2.23%
+round(nrow(s1.outcomes[s1.outcomes$gender == "male",])/nrow(s1.outcomes)*100,2)         # Male: 52.01%
+
+# Race
+s1.outcomes %>%
+  summarise(
+    pct_white = round(100 * sum(white, na.rm = T)/sum(!is.na(race)),2),
+    pct_asian = round(100 * sum(asian, na.rm = T)/sum(!is.na(race)),2),
+    pct_black = round(100 * sum(black, na.rm = T)/sum(!is.na(race)),2),
+    pct_native = round(100 * sum(native, na.rm = T)/sum(!is.na(race)),2),
+    pct_islander = round(100 * sum(islander, na.rm = T)/sum(!is.na(race)),2),
+    # total n identified as latino divided by total n that reported latino status
+    pct_latino = round(100 * sum(latino, na.rm = T)/sum(!is.na(latino)),2)
+    )
+
+# Years of education M = 14.81, SD = 2.29
+round(mean(s1.outcomes$yrs.education, na.rm = T), 2)
+round(sd(s1.outcomes$yrs.education, na.rm = T), 2)
+```
+
+## 2.2 Descriptives of Outcome Variables
+
+Across the sample, the mean threat facilitation medRTc scores were -7.92 (SD = 71.78, t(7759) =  -9.71, p < 0.001) indicating that participants were slightly faster to respond when the target appeared in the location of a threat stimulus, although this effect was small in magnitude. When we looked at threat facilitation scores using accuracy instead of RT, we found that participants were slightly less accurate to respond to threat congruent than threat incongruent trials (M = .003, SD = .04, t(7759) = 6.73, p < .001), although this effect was again small. 
+
+```{r outcome-descriptives}
+# Mean TF RT score
+t.test(s1.outcomes$TC.TIC.rt)        #  M = -7.92 *** t = -9.7138, df = 7759
+round(sd(s1.outcomes$TC.TIC.rt), 2)  # SD = 71.78
+
+# Mean TF Accuracy score
+t.test(s1.outcomes$TC.TIC.acc)        # M = 0.003 *** t = 6.7274, df = 7759
+round(sd(s1.outcomes$TC.TIC.acc), 2)  # SD = 0.04
+```
+
+
+# 3. Descriptives and Demogrphics for Each Version
+
+This produces the columns included in Table S2 (in the supplement) in the paper, and more columns on the confidence intervals of split half Pearson and Spearman correlations. 
+```{r version-demographics}
+s1.v.descriptives <- s1.outcomes %>% 
+  mutate(
+    female = ifelse(gender == "female", 1, 0),
+    male = ifelse(gender == "male", 1, 0),
+    queer = ifelse(gender == "genderqueer", 1, 0)
+    ) %>%
+  group_by(test_id) %>% 
+  summarise(
+    N = n(),
+    medRTc = round(mean(all_medRTc)),
+    accuracy = round(mean(all_accuracy), 2),
+    TC = round(mean(TC_medRTc)),
+    TIC = round(mean(TIC_medRTc)),
+    TT = round(mean(TT_medRTc)),
+    NN = round(mean(NN_medRTc)),
+    TC.TIC.rt = round(mean(TC.TIC.rt)),
+    TC.TT.rt = round(mean(TC.TT.rt)),
+    TC.NN.rt = round(mean(TC.NN.rt)),
+    Age = round(mean(age, na.rm = T)),
+    pct_female = round(sum(female)/N*100),
+    pct_male = round(sum(male)/N*100),
+    pct_queer = round(sum(queer)/N*100),
+    # total n identified as white divided by total reported race
+    pct_white = round(100 * sum(white, na.rm = T)/sum(!is.na(race))),
+    pct_asian = round(100 * sum(asian, na.rm = T)/sum(!is.na(race))),
+    pct_black = round(100 * sum(black, na.rm = T)/sum(!is.na(race))),
+    pct_native = round(100 * sum(native, na.rm = T)/sum(!is.na(race))),
+    pct_islander = round(100 * sum(islander, na.rm = T)/sum(!is.na(race))),
+    # total n identified as latino divided by total reported latino status
+    pct_latino = round(100 * sum(latino, na.rm = T)/sum(!is.na(latino))),
+    education = round(mean(yrs.education, na.rm = T))
+    ) %>%
+  merge(s1.rt.pearson, by = "test_id") %>%
+  merge(s1.rt.spearman, by = "test_id") %>%
+  merge(s1.acc.pearson, by = "test_id") %>%
+  merge(s1.acc.spearman, by = "test_id")
+```
+
+
+# 4. Figure 2
+## Figure 2 & S4a
+```{r figure-2-s4a}
+s1.v.params.rt.pearson <- s1.v.params %>%
+  merge(s1.rt.pearson, by = "test_id")
+
+# Versions with 2 and 4 conditions are plotted in different figures to save space in paper
+s1.half.stats.2.cond <- s1.half.stats %>%
+  filter(cond_num == 2)
+s1.half.stats.4.cond <- s1.half.stats %>%
+  filter(cond_num == 4)
+
+s1.cor.2.cond.rt <- s1.v.params.rt.pearson %>%
+  filter(cond_num == 2) %>%
+  group_by(orient, imageType, soa)
+s1.cor.4.cond.rt <- s1.v.params.rt.pearson %>%
+  filter(cond_num == 4) %>%
+  group_by(orient, imageType, soa)
+
+r.italic <- "italic(r[P])"
+rho.italic <- "italic(\u03c1)"
+# a function to remove the zero and period before decimals
+fm <- function(val) { sub("^(-?)0.", "\\1.", sprintf("%.2f", val)) }
+
+
+# Plot split-half correlation, facetted by version
+rb.by.version.rt.18 <- function(half.stats.df, cor.df, var1, var2){
+  min = -500
+  max = 500
+  text.x = 0
+  text.y1 = 450
+  text.y2 = 380
+  s = 2
+  ggplot(half.stats.df, aes(x = var1, y = var2, color = orient)) +
+    geom_point(alpha = 0.2, size = s) + 
+    geom_abline(slope = 0.67, size = 0.5, linetype = 2) +
+    scale_x_continuous(expand = c(0, 0), breaks = c(-500, -300, -100, 100, 300, 500),
+                       # add a label for facets
+                       sec.axis = sec_axis(~ . , name = "Stimulus Type", breaks = NULL, labels = NULL)) +
+    scale_y_continuous(expand = c(0, 0), breaks = c(-500, -300, -100, 100, 300, 500),
+                       sec.axis = sec_axis(~ . , name = "Stimulus Onset Asynchrony", breaks = NULL, labels = NULL)) +
+    scale_color_manual(values = c(colors[2], colors[3])) + 
+    geom_text(data = cor.df, size = 3.7,
+              mapping = aes(x = -290,
+                            y = c(text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1,
+                                  text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2),
+                            label = paste0("v"),
+                            color = orient)) +
+    geom_text(data = cor.df, size = 3.7,
+              mapping = aes(x = -240,
+                            y = c(text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1,
+                                  text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2),
+                            label = paste0(test_id),
+                            color = orient)) +
+    geom_text(data = cor.df, size = 3.7,
+              mapping = aes(x = -147,
+                            y = c(text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1,
+                                  text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2),
+                            label = paste0(r.italic),
+                            color = orient), parse = TRUE) +    
+    geom_text(data = cor.df, size = 3.7,
+              mapping = aes(x = 50,
+                            y = c(text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1,
+                                  text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2),
+                            label = paste0("(", n.rt.pearson-2, ") = ", fm(r.rt.pearson), ","),
+                            color = orient)) +    
+    geom_text(data = cor.df, size = 3.7,
+              mapping = aes(x = 250,
+                            y = c(text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1,
+                                  text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2),
+                            label = paste0(rho.italic),
+                            color = orient), parse = TRUE) +    
+    geom_text(data = cor.df, size = 3.7,
+              mapping = aes(x = 350,
+                            y = c(text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1,
+                                  text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2),
+                            label = paste0(" = ", fm(rho.rt.pearson)),
+                            color = orient)) +
+    facet_grid(soa ~ imageType) +
+    stat_smooth(method = "lm", fullrange = TRUE, se = F) +
+    coord_cartesian(ylim = c(min, max), xlim = c(min, max)) +
+    labs(x = "Odd trials", y = "Even trials", color = "Stimulus\nOrientation") + 
+    theme_minimal() +
+    theme(plot.title = element_text(family = "Times"), 
+          panel.spacing = unit(1.3, "lines"),
+          panel.border = element_rect(size = 0.5, color = "grey", fill = NA),
+          axis.ticks = element_line(size = 0.3),
+          strip.text.x = element_text(size = 11),
+          strip.text.y = element_text(size = 11, vjust = 1.5),
+          axis.title.y = element_text(vjust = 2)
+          ) 
+}
+
+
+rb.by.version.rt.18(s1.half.stats.2.cond, s1.cor.2.cond.rt, 
+                              s1.half.stats.2.cond$TC.TIC.1.rt,
+                              s1.half.stats.2.cond$TC.TIC.2.rt)
+# ggsave("figures/dotProbe_figure_2_s4a_p1.png", plot = last_plot(), width = 10, height = 8.7)
+
+
+rb.by.version.rt.18(s1.half.stats.4.cond, s1.cor.4.cond.rt, 
+                               s1.half.stats.4.cond$TC.TIC.1.rt,
+                               s1.half.stats.4.cond$TC.TIC.2.rt)
+# ggsave("figures/dotProbe_figure_s4a_p2.png", plot = last_plot(), width = 10, height = 8.7)
+```
+
+## Figure S4b
+```{r figure-s4b}
+s1.v.params.acc.pearson <- s1.v.params %>%
+  merge(s1.acc.pearson, by = "test_id")
+
+s1.cor.2.cond.acc <- s1.v.params.acc.pearson %>%
+  filter(cond_num == 2) %>%
+  group_by(orient, imageType, soa)
+s1.cor.4.cond.acc <- s1.v.params.acc.pearson %>%
+  filter(cond_num == 4) %>%
+  group_by(orient, imageType, soa)
+
+
+rb.by.version.acc.18 <- function(half.stats.df, cor.df, var1, var2, cond_num = 2){
+  if(cond_num == 2)
+  {
+    min = -0.4
+    max = 0.4
+    text.y1 = 0.36
+    text.y2 = 0.3
+    text.x.v = -.23
+    text.x.testid = -.19
+    text.x.r = -.11
+    text.x.rvalue = .05
+    text.x.rho = .21
+    text.x.rhovalue = .285
+  }
+  else {
+    min = -0.6
+    max = 0.6
+    text.y1 = 0.54
+    text.y2 = 0.45
+    text.x.v = -.35
+    text.x.testid = -.28
+    text.x.r = -.16
+    text.x.rvalue = .08
+    text.x.rho = .32
+    text.x.rhovalue = .44
+  }
+  s = 3
+  ggplot(half.stats.df, aes(x = var1, y = var2, color = orient)) +
+    geom_jitter(alpha = 0.2, size = s) + 
+    geom_abline(slope = 0.67, size = 0.5, linetype = 2) +
+    scale_x_continuous(expand = c(0, 0), breaks = c(-0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6), limits = c(min, max),
+                       # add a label for facets
+                       sec.axis = sec_axis(~ . , name = "Stimulus Type", breaks = NULL, labels = NULL)) +
+    scale_y_continuous(expand = c(0, 0), breaks = c(-0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6), limits = c(min, max),
+                       sec.axis = sec_axis(~ . , name = "Stimulus Onset Asynchrony", breaks = NULL, labels = NULL)) +
+    scale_color_manual(values = c(colors[2], colors[3])) + 
+    geom_text(data = cor.df, size = 3.7,
+              mapping = aes(x = text.x.v,
+                            y = c(text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1,
+                                  text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2),
+                            label = paste0("v"),
+                            color = orient)) +
+    geom_text(data = cor.df, size = 3.7,
+              mapping = aes(x = text.x.testid,
+                            y = c(text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1,
+                                  text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2),
+                            label = paste0(test_id),
+                            color = orient)) +
+    geom_text(data = cor.df, size = 3.7,
+              mapping = aes(x = text.x.r,
+                            y = c(text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1,
+                                  text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2),
+                            label = paste0(r.italic),
+                            color = orient), parse = TRUE) +
+    geom_text(data = cor.df, size = 3.7,
+              mapping = aes(x = text.x.rvalue,
+                            y = c(text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1,
+                                  text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2),
+                            label = paste0("(", n.acc.pearson-2, ") = ", fm(r.acc.pearson), ","),
+                            color = orient)) +
+    geom_text(data = cor.df, size = 3.7,
+              mapping = aes(x = text.x.rho,
+                            y = c(text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1,
+                                  text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2),
+                            label = paste0(rho.italic),
+                            color = orient), parse = TRUE) +
+    geom_text(data = cor.df, size = 3.7,
+              mapping = aes(x = text.x.rhovalue,
+                            y = c(text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1, text.y1,
+                                  text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2, text.y2),
+                            label = paste0(" = ", fm(rho.acc.pearson)),
+                            color = orient)) +
+    facet_grid(soa ~ imageType) +
+    stat_smooth(method = "lm", fullrange = TRUE, se = F) +
+    labs(x = "Odd trials", y = "Even trials", color = "Stimulus\nOrientation") + 
+    theme_minimal() +
+    theme(plot.title = element_text(family = "Times"), 
+          panel.spacing = unit(1.3, "lines"),
+          panel.border = element_rect(size = 0.5, color = "grey", fill = NA),
+          axis.ticks = element_line(size = 0.3),
+          strip.text.x = element_text(size = 11),
+          strip.text.y = element_text(size = 11, vjust = 1.5),
+          axis.title.y = element_text(vjust = 2)) 
+}
+
+rb.by.version.acc.18(s1.half.stats.2.cond, s1.cor.2.cond.acc,
+                              s1.half.stats.2.cond$TC.TIC.1.acc,
+                              s1.half.stats.2.cond$TC.TIC.2.acc, 2)
+# ggsave("figures/dotProbe_figure_s4b_p1.png", plot = last_plot(), width = 10, height = 8.7)
+
+rb.by.version.acc.18(s1.half.stats.4.cond, s1.cor.4.cond.acc,
+                              s1.half.stats.4.cond$TC.TIC.1.acc,
+                              s1.half.stats.4.cond$TC.TIC.2.acc, 4)
+# ggsave("figures/dotProbe_figure_s4b_p2.png", plot = last_plot(), width = 10, height = 8.7)
+```
+
+
+# 5. Figure 3
+## Fig 3a. Distribution of split-half Pearson correlation (RT)
+```{r figure-3a}
+ggplot(s1.rt.pearson, aes(x = r.rt.pearson)) +
+  geom_histogram(alpha = 0.9, color = "white", fill = colors[1], binwidth = 0.05, show.legend = FALSE) +
+  scale_x_continuous("Split-half Correlation", limits = c(-.7, .7), 
+                     breaks = c(-7:6*0.1, 0.67), 
+                     labels = c("-0.7", "-0.6", "-0.5", "-0.4", "-0.3", "-0.2", "-0.1", "0", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.67"),
+                     expand = c(.001, .001)) +
+  scale_y_continuous("Number of Version", limits = c(0, 7), breaks = 0:7, expand = c(0.004,0)) +
+  geom_vline(xintercept = 0.67, linetype = 2) +
+  theme_bw() +
+  theme(plot.margin = margin(0.3,0.5,0.3,0.3, "cm"))
+# ggsave("figures/s1_figure_3a.png", width = 6, height = 3.5, plot = last_plot())
+```
+
+
+## Figure 3b. Distribution of split-half Pearson correlation (accuracy)
+```{r figure3b}
+ggplot(s1.acc.pearson, aes(x = r.acc.pearson)) +
+  geom_histogram(alpha = 0.9, color = "white", fill = colors[1], binwidth = 0.05, show.legend = FALSE) +
+  scale_x_continuous("Split-half Correlation", 
+                     limits = c(-.7, .7),
+                     breaks = c(-7:6*0.1, 0.67),
+                     labels = c("-0.7", "-0.6", "-0.5", "-0.4", "-0.3", "-0.2", "-0.1", "0", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.67"),
+                     expand = c(.001, .001)) +
+  scale_y_continuous("Number of Version", limits = c(0, 7), breaks = 0:7, expand = c(0.004,0)) +
+  geom_vline(xintercept = 0.67, linetype = 2) +
+  theme_bw() +
+  theme(plot.margin = margin(0.3,0.5,0.3,0.3, "cm"))
+ggsave("figures/s1_figure_3b.png", width = 6, height = 3.5, plot = last_plot())
+```
+

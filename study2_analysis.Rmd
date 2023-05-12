@@ -1,0 +1,661 @@
+---
+title: "Reliability of the Emotional Dot Probe Task in Study 2"
+---
+
+**STUDY 2: The goals of this file is to (1) use the additional data collected in Study 2 to analyze the reliability of the 8 versions of the Threat Dot Probe Task that showed significantly nonzero split-half reliability in Study 1, and (2) whether reliability is higher among participants with higher anxiety levels. **  
+
+```{r, set-up, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+library(tidyverse)
+library(ggpmisc)
+library(spearmanCI)
+# define colors we use for visualization
+colors <- c("#0C7BDC", "#FFC20A", "#7D2F39")
+
+# GAD7
+# 0–4: minimal anxiety 
+# 5–9: mild anxiety
+# 10–14: moderate anxiety 
+# 15–21: severe anxiety
+# >=10 is clinical cutoff
+
+# Load processed data
+# naming convention: s2 - study 2
+# Outcome/person level data (one row per participant)
+s2.all.outcomes <- read_csv("data/study2/openData_study2_outcomes_032623.csv")
+# Trial level data (48 test trials per participant) -> to calculate split half correlation and reliability
+s2.all.trials <- read_csv("data/study2/openData_study2_trials_032623.csv")
+```
+
+
+# 1. Quality Control
+After excluding participants whose results did not pass data quality control filters (N = 7 with accuracy < 60% or median RTc < 300 ms), the total sample was 1840 with between 202 to 246 participants completing each version. 
+
+```{r quality-control}
+# Exclude participants with medRTc < 300 ms or accuracy < 60%
+s2.outcomes <- s2.all.outcomes %>%
+  filter(all_accuracy >= 0.6 & all_medRTc >= 300)
+s2.excluded.id <- s2.all.outcomes[s2.all.outcomes$all_accuracy < 0.6 | s2.all.outcomes$all_medRTc < 300,]$id
+
+# Total N included in analysis = 1840
+nrow(s2.outcomes) 
+# N excluded = 7
+nrow(s2.all.outcomes) - nrow(s2.outcomes)
+
+# Minimum and maximum N for each test version, test_id 14: N = 202, test_id 19: N = 246
+s2.outcomes %>% 
+  group_by(test_id) %>% 
+  summarise(n = n()) %>% 
+  arrange(n) %>%
+  filter(row_number() == 1 | row_number() == n())
+```
+
+```{r process-trial-data, include = FALSE}
+# condition 1: Threat congruent trials
+# condition 2: Threat incongruent trials
+# condition 3: Both threat trials
+# condition 4: Both neutral trials
+s2.parsed.trials <- s2.all.trials %>%
+  # exclude participants who failed quality control criteria
+  filter(!(id %in% s2.excluded.id) & condition != "practice") %>%
+  mutate(rt = as.numeric(rt),
+         correct = as.numeric(correct)) %>%
+  group_by(id) %>%
+  mutate(
+    # number the trials (mixed among all conditions) 
+    trial.all.cond = row_number(), 
+    # label whether each trial is an odd (1) or even (2) trial (mixed among all conditions)
+    half.all.cond = ifelse(trial.all.cond %% 2 == 1, 1, 2)) %>%
+  group_by(id, condition) %>%
+  mutate(
+    # number the trials (within each condition)
+    trial.by.cond = row_number(),
+    # label whether each trial is an odd (1) or even (2) trial (within each condition)
+    half.by.cond = ifelse(trial.by.cond %% 2 == 1, 1, 2))
+  
+# Calculate MEDIAN RT for odd and even trials (mixed among all conditions)
+s2.half.med.rt.all.cond <- s2.parsed.trials %>%
+  group_by(id, half.all.cond) %>%
+  summarise(half.med.rt.all = median(rt)) %>%
+  pivot_wider(names_from = half.all.cond, names_glue = "half.{half.all.cond}.rt", values_from = half.med.rt.all)
+
+# Calculate MEAN accuracy for odd and even trials (mixed among all conditions)
+s2.half.mean.acc.all.cond <- s2.parsed.trials %>%
+  group_by(id, half.all.cond) %>%
+  summarise(half.mean.acc.all = mean(correct)) %>%
+  pivot_wider(names_from = half.all.cond, names_glue = "half.{half.all.cond}.acc", values_from = half.mean.acc.all)
+
+s2.half.rt.acc.all.cond <- merge(s2.half.med.rt.all.cond, s2.half.mean.acc.all.cond, by = "id")
+
+# Calculate MEDIAN RT for odd and even trials (within each condition)
+s2.half.med.rt.by.cond <- s2.parsed.trials %>%
+  group_by(id, condition, half.by.cond) %>%
+  summarise(half.med.rt.by.cond = median(rt)) %>%
+  pivot_wider(names_from = c(condition, half.by.cond), 
+              names_glue = "cond{condition}.{half.by.cond}.rt", 
+              values_from = half.med.rt.by.cond) %>%
+  # Calculate the differences in median RT
+  mutate(TC.TIC.1.rt = cond1.1.rt - cond2.1.rt,
+         TC.TIC.2.rt = cond1.2.rt - cond2.2.rt,
+         TC.TT.1.rt = cond1.1.rt - cond3.1.rt,
+         TC.TT.2.rt = cond1.2.rt - cond3.2.rt,
+         TC.NN.1.rt = cond1.1.rt - cond4.1.rt,
+         TC.NN.2.rt = cond1.2.rt - cond4.2.rt)
+
+# Calculate MEAN accuracy for odd and even trials (within each condition)
+s2.half.mean.acc.by.cond <- s2.parsed.trials %>%
+  group_by(id, condition, half.by.cond) %>%
+  summarise(half.mean.rt.by.cond = mean(correct)) %>%
+  pivot_wider(names_from = c(condition, half.by.cond), 
+              names_glue = "cond{condition}.{half.by.cond}.acc", 
+              values_from = half.mean.rt.by.cond) %>%
+  # Calculate the differences in mean accuracy
+  mutate(TC.TIC.1.acc = cond1.1.acc - cond2.1.acc,
+         TC.TIC.2.acc = cond1.2.acc - cond2.2.acc,
+         TC.TT.1.acc = cond1.1.acc - cond3.1.acc,
+         TC.TT.2.acc = cond1.2.acc - cond3.2.acc,
+         TC.NN.1.acc = cond1.1.acc - cond4.1.acc,
+         TC.NN.2.acc = cond1.2.acc - cond4.2.acc)
+
+s2.half.rt.acc.by.cond <- merge(s2.half.med.rt.by.cond, s2.half.mean.acc.by.cond, by = "id")
+
+# Merge them into 1 df for convenience
+s2.half.stats <- merge(s2.half.rt.acc.all.cond, s2.half.rt.acc.by.cond, by = "id")
+
+s2.pt.info <- s2.outcomes %>% select(id, test_id, soa, imageType, orient, cond_num, gad7, bhs, gad7_2lvl, gad7_4lvl, bhs_4lvl, bhs_10lvl, bhs_4lvl_high, bhs_10lvl_high)
+s2.half.stats <- merge(s2.pt.info, s2.half.stats, by = "id")
+```
+
+
+```{r df-by-anxiety}
+# Separate outcome data by GAD level
+s2.outcomes.gad.SEVERE <- s2.outcomes %>%
+  filter(gad7_2lvl == "high")
+
+# Separate outcome data by BHS level
+s2.outcomes.bhs.topQuartile <- s2.outcomes %>%
+  filter(bhs_4lvl_high == "high")
+s2.outcomes.bhs.topDecile <- s2.outcomes %>%
+  filter(bhs_10lvl_high == "high")
+
+# Separate trial level data by GAD level
+s2.half.gad.SEVERE <- s2.half.stats %>%
+    filter(gad7_2lvl == "high")
+
+# Separate outcome data by BHS level
+s2.half.bhs.topQuartile <- s2.half.stats %>%
+  filter(bhs_4lvl_high == "high")
+s2.half.bhs.topDecile <- s2.half.stats %>%
+  filter(bhs_10lvl_high == "high")
+```
+
+
+```{r version-parameters}
+s2.v.params <- s2.outcomes %>%
+  group_by(test_id) %>%
+  filter(row_number() == 1) %>%
+  select(test_id, soa, imageType, orient, cond_num)
+```
+
+```{r correlation-by-version}
+# ---- PEARSON -----
+# Split half PEARSON Correlation of threat facilitation RT scores, by version
+s2.rt.pearson <- s2.half.stats %>%
+  group_by(test_id) %>%
+  summarise(
+    n.rt.pearson = n(),
+    r.rt.pearson = cor(TC.TIC.1.rt, TC.TIC.2.rt),
+    r.rt.pearson.lower = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$conf.int[1], 2),
+    r.rt.pearson.upper = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$conf.int[2], 2),
+    rho.rt.pearson = ifelse(r.rt.pearson > 0, (2*r.rt.pearson)/(1+r.rt.pearson), 0), 
+    rho.rt.pearson.lower = round(ifelse(r.rt.pearson.lower > 0, (2*r.rt.pearson.lower)/(1+r.rt.pearson.lower), 0), 2),
+    rho.rt.pearson.upper = round(ifelse(r.rt.pearson.upper > 0, (2*r.rt.pearson.upper)/(1+r.rt.pearson.upper), 0), 2),
+    p.rt.pearson = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$p.value, 4),
+    p.rt.pearson.star = ifelse(p.rt.pearson < .001, "***",
+                        ifelse(p.rt.pearson < .01, "** ",
+                        ifelse(p.rt.pearson < .05, "*  ", "   "))))
+
+# Split half PEARSON Correlation of threat facilitation ACCURACY scores, by version
+s2.acc.pearson <- s2.half.stats %>%
+  group_by(test_id) %>%
+  summarise(
+    n.acc.pearson = n(),
+    r.acc.pearson = round(cor(TC.TIC.1.acc, TC.TIC.2.acc), 2),
+    r.acc.pearson.lower = round(cor.test(TC.TIC.1.acc, TC.TIC.2.acc)$conf.int[1], 2),
+    r.acc.pearson.upper = round(cor.test(TC.TIC.1.acc, TC.TIC.2.acc)$conf.int[2], 2),
+    rho.acc.pearson = round(ifelse(r.acc.pearson > 0, (2*r.acc.pearson)/(1+r.acc.pearson), 0), 2),
+    rho.acc.pearson.lower = round(ifelse(r.acc.pearson.lower > 0, (2*r.acc.pearson.lower)/(1+r.acc.pearson.lower), 0), 2),
+    rho.acc.pearson.upper = round(ifelse(r.acc.pearson.upper > 0, (2*r.acc.pearson.upper)/(1+r.acc.pearson.upper), 0), 2),
+    p.acc.pearson = round(cor.test(TC.TIC.1.acc, TC.TIC.2.acc)$p.value, 4),
+    p.acc.pearson.star = ifelse(p.acc.pearson < .001, "***",
+                         ifelse(p.acc.pearson < .01, "** ",
+                         ifelse(p.acc.pearson < .05, "*  ", "   "))))
+
+
+# --- SPEARMAN ------- 
+
+# Split half SPEARMAN Correlation of threat facilitation RT scores, for versions with sig Pearson correlation
+s2.rt.sig.test_ids <- s2.rt.pearson[s2.rt.pearson$p.rt.pearson < .05 & s2.rt.pearson$r.rt.pearson > 0,]$test_id
+s2.rt.spearman <- data.frame(
+  test_id = 1:36,
+  r.rt.spearman = NA, 
+  r.rt.spearman.lower = NA, 
+  r.rt.spearman.upper = NA,
+  p.rt.spearman = NA
+)
+for (i in s2.rt.sig.test_ids) {
+  s2.rt.spearman[i, 2] <- round(cor.test(s2.half.stats[s2.half.stats$test_id == i,]$TC.TIC.1.rt,
+                s2.half.stats[s2.half.stats$test_id == i,]$TC.TIC.2.rt, method = "spearman")$estimate, 2)
+  s2.rt.spearman[i, 5] <- round(cor.test(s2.half.stats[s2.half.stats$test_id == i,]$TC.TIC.1.rt,
+                s2.half.stats[s2.half.stats$test_id == i,]$TC.TIC.2.rt, method = "spearman")$p.value, 4)
+}
+
+# Split half SPEARMAN Correlation of threat facilitation ACCURACY scores, for versions with sig Pearson correlation
+s2.acc.sig.test_ids <- s2.acc.pearson[s2.acc.pearson$p.acc.pearson < .05 & s2.acc.pearson$r.acc.pearson > 0,]$test_id
+s2.acc.spearman <- data.frame(
+  test_id = 1:36,
+  r.acc.spearman = NA,
+  r.acc.spearman.lower = NA, 
+  r.acc.spearman.upper = NA,
+  p.acc.spearman = NA
+)
+for (i in s2.acc.sig.test_ids) {
+  s2.acc.spearman[i, 2] <- round(cor.test(s2.half.stats[s2.half.stats$test_id == i,]$TC.TIC.1.acc,
+                s2.half.stats[s2.half.stats$test_id == i,]$TC.TIC.2.acc, method = "spearman")$estimate, 2)
+  s2.acc.spearman[i, 5] <- round(cor.test(s2.half.stats[s2.half.stats$test_id == i,]$TC.TIC.1.acc,
+                s2.half.stats[s2.half.stats$test_id == i,]$TC.TIC.2.acc, method = "spearman")$p.value, 4)
+}
+
+# Split half SPEARMAN RT CI 
+# don't know how to store the outcome of spearmanCI into a table. So I'm manually adding them to the spearman table
+# spearmanCI(s2.half.stats[s2.half.stats$test_id == 1,]$TC.TIC.1.rt,
+#            s2.half.stats[s2.half.stats$test_id == 1,]$TC.TIC.2.rt, level = 0.95, method = "Euclidean", plot = FALSE) # rho's CI [-0.121, 0.168]
+# spearmanCI(s2.half.stats[s2.half.stats$test_id == 11,]$TC.TIC.1.rt,
+#            s2.half.stats[s2.half.stats$test_id == 11,]$TC.TIC.2.rt, level = 0.95, method = "Euclidean", plot = FALSE) # rho's CI [-0.009, 0.275]
+# spearmanCI(s2.half.stats[s2.half.stats$test_id == 12,]$TC.TIC.1.rt,
+#            s2.half.stats[s2.half.stats$test_id == 12,]$TC.TIC.2.rt, level = 0.95, method = "Euclidean", plot = FALSE) # rho's CI [-0.048, 0.231]
+# spearmanCI(s2.half.stats[s2.half.stats$test_id == 18,]$TC.TIC.1.rt,
+#            s2.half.stats[s2.half.stats$test_id == 18,]$TC.TIC.2.rt, level = 0.95, method = "Euclidean", plot = FALSE) # rho's CI [-0.036, 0.257]
+s2.rt.spearman[1, 3] <- -0.121
+s2.rt.spearman[1, 4] <- 0.168
+s2.rt.spearman[11, 3] <- -0.009
+s2.rt.spearman[11, 4] <- 0.275
+s2.rt.spearman[12, 3] <- -0.048
+s2.rt.spearman[12, 4] <- 0.231
+s2.rt.spearman[18, 3] <- -0.036
+s2.rt.spearman[18, 4] <- 0.257
+# Calculate rho's CI for the Spearman correlation of TF RT scores
+s2.rt.spearman <- s2.rt.spearman %>%
+  mutate(
+    rho.rt.spearman = round(ifelse(r.rt.spearman > 0, (2*r.rt.spearman)/(1+r.rt.spearman), 0), 2),
+    rho.rt.spearman.lower = round(ifelse(r.rt.spearman.lower > 0, (2*r.rt.spearman.lower)/(1+r.rt.spearman.lower), 0), 2),
+    rho.rt.spearman.upper = round(ifelse(r.rt.spearman.upper > 0, (2*r.rt.spearman.upper)/(1+r.rt.spearman.upper), 0), 2),
+  )
+
+versions <- c(1,10,11,12,14,15,18,19)
+s2.rt.spearman <- s2.rt.spearman %>%
+  filter(test_id %in% versions)
+
+
+# Split half SPEARMAN Accuracy CI 
+spearmanCI(s2.half.stats[s2.half.stats$test_id == 14,]$TC.TIC.1.acc,
+           s2.half.stats[s2.half.stats$test_id == 14,]$TC.TIC.2.acc, level = 0.95, method = "Euclidean", plot = FALSE) # r's CI [-0.023, 0.416]
+spearmanCI(s2.half.stats[s2.half.stats$test_id == 19,]$TC.TIC.1.acc,
+           s2.half.stats[s2.half.stats$test_id == 19,]$TC.TIC.2.acc, level = 0.95, method = "Euclidean", plot = FALSE) # r's CI [0.036, 0.331]
+s2.acc.spearman[14, 3] <- -0.023
+s2.acc.spearman[14, 4] <- 0.416
+s2.acc.spearman[19, 3] <- 0.036
+s2.acc.spearman[19, 4] <- 0.331
+# Calculate rho's CI for the Spearman correlation of TF accuracy scores
+s2.acc.spearman <- s2.acc.spearman %>%
+  mutate(
+    rho.acc.spearman = round(ifelse(r.acc.spearman > 0, (2*r.acc.spearman)/(1+r.acc.spearman), 0), 2),
+    rho.acc.spearman.lower = round(ifelse(r.acc.spearman.lower > 0, (2*r.acc.spearman.lower)/(1+r.acc.spearman.lower), 0), 2),
+    rho.acc.spearman.upper = round(ifelse(r.acc.spearman.upper > 0, (2*r.acc.spearman.upper)/(1+r.acc.spearman.upper), 0), 2),
+  )
+s2.acc.spearman <- s2.acc.spearman %>%
+  filter(test_id %in% versions)
+```
+
+
+# 2. Descriptives and Demographics for the Whole Sample
+
+## 2.1 Demographics 
+
+Across the whole sample, the average age was 36.07 (SD = 15.34); 53.78% of participants identified as female, 42.34% identified as male, and 3.86% identified as nonbinary or gender queer. Of the total sample, 78.14% identified as European or White, 16.63% identified as Asian, 5.61% identified as African or Black, 2.97% identified as American Indian or Alaska Native, 0.84% identified as Native Hawaiian or Pacific Islander, and 9.33% identified as Hispanic or Latino. 
+
+```{r whole-sample-demographics}
+# Age M = 36.07, SD = 15.34 
+# (note that the statistics for age in this open access data file are slightly different from the original ages after we changed all participants whose ages were > 89 into 90 due to HIPPA rules) 
+round(mean(s2.outcomes$age, na.rm = T), 2)
+round(sd(s2.outcomes$age, na.rm = T), 2)
+
+# Gender
+round(nrow(s2.outcomes[s2.outcomes$gender == "female",])/nrow(s2.outcomes)*100, 2)      # Female: 53.80%
+round(nrow(s2.outcomes[s2.outcomes$gender == "genderqueer",])/nrow(s2.outcomes)*100, 2) # Queer: 3.86%
+round(nrow(s2.outcomes[s2.outcomes$gender == "male",])/nrow(s2.outcomes)*100,2)         # Male: 42.34%
+
+# Race
+s2.outcomes %>%
+  summarise(
+    pct_white = round(100 * sum(white, na.rm = T)/sum(!is.na(race)),2),
+    pct_asian = round(100 * sum(asian, na.rm = T)/sum(!is.na(race)),2),
+    pct_black = round(100 * sum(black, na.rm = T)/sum(!is.na(race)),2),
+    pct_native = round(100 * sum(native, na.rm = T)/sum(!is.na(race)),2),
+    pct_islander = round(100 * sum(islander, na.rm = T)/sum(!is.na(race)),2),
+    # total n identified as latino divided by total n that reported latino status
+    pct_latino = round(100 * sum(latino, na.rm = T)/sum(!is.na(latino)),2)
+    )
+
+# Years of education M = 15.16, SD = 2.19
+round(mean(s2.outcomes$yrs.education, na.rm = T), 2)
+round(sd(s2.outcomes$yrs.education, na.rm = T), 2)
+```
+
+
+## 2.2 Descriptives of Outcome Variables
+
+Across the sample, we observed threat facilitation RT scores differed from zero for all participants (M = -9.57, SD = 53.85, t(1839) = -7.63, p < .001) as well as high anxious participants as defined by GAD-7 (M = -16.90, SD = 45.89, t(253) = -5.87, p < .001) and the top quartile of the BHS (M = -13.55, SD = 48.59, t(454) = -5.95, p < .001).
+
+We noted when conducting these analyses that our top quartile had significantly lower self-reported hypervigilance than the sample from Smith et al., 2019.  Thus, we additionally looked at participants in the top decile of BHS scores which yielded a sample with comparable hypervigilance levels to that reported in Smith et al (2019). For the top decile of BHS scores, threat facilitation scores also differed from zero (M = -15.20, SD = 50.43, t(167) = -3.91, p < .001). 
+
+```{r outcome-descriptives}
+# Mean TF RT score
+t.test(s2.outcomes$TC.TIC.rt)        # M = -9.57 *** t = -7.6267, df = 1839
+round(sd(s2.outcomes$TC.TIC.rt), 2)  # SD = 53.85
+
+# Mean TF RT score for the SEVERE GAD group
+t.test(s2.outcomes.gad.SEVERE$TC.TIC.rt)        # M = -16.90 *** t = -5.8675, df = 253
+round(sd(s2.outcomes.gad.SEVERE$TC.TIC.rt), 2)  # SD = 45.89
+
+# Mean TF RT score for the top QUARTILE BHS group
+t.test(s2.outcomes.bhs.topQuartile$TC.TIC.rt)        # M = -13.55 *** t = -5.949, df = 454
+round(sd(s2.outcomes.bhs.topQuartile$TC.TIC.rt), 2)  # SD = 48.59
+
+# Mean TF RT score for the top DECILE BHS group
+t.test(s2.outcomes.bhs.topDecile$TC.TIC.rt)        # M = -15.20 *** t = -3.9075, df = 167
+round(sd(s2.outcomes.bhs.topDecile$TC.TIC.rt), 2)  # SD = 50.43
+```
+
+
+# 3. Descriptives and Demogrphics for Each Version
+
+This produces the columns included in Table S3 (in the supplement) in the paper, and more columns on the confidence intervals of split half Pearson and Spearman correlations. 
+```{r version-demographics}
+s2.v.descriptives <- s2.outcomes %>% 
+  mutate(
+    female = ifelse(gender == "female", 1, 0),
+    male = ifelse(gender == "male", 1, 0),
+    queer = ifelse(gender == "genderqueer", 1, 0)
+    ) %>%
+  group_by(test_id) %>% 
+  summarise(
+    N = n(),
+    medRTc = round(mean(all_medRTc)),
+    accuracy = round(mean(all_accuracy), 2),
+    TC = round(mean(TC_medRTc)),
+    TIC = round(mean(TIC_medRTc)),
+    TT = round(mean(TT_medRTc)),
+    NN = round(mean(NN_medRTc)),
+    TC.TIC.rt = round(mean(TC.TIC.rt)),
+    TC.TT.rt = round(mean(TC.TT.rt)),
+    TC.NN.rt = round(mean(TC.NN.rt)),
+    Age = round(mean(age, na.rm = T)),
+    pct_female = round(sum(female)/N*100),
+    pct_male = round(sum(male)/N*100),
+    pct_queer = round(sum(queer)/N*100),
+    # total n identified as white divided by total reported race
+    pct_white = round(100 * sum(white, na.rm = T)/sum(!is.na(race))),
+    pct_asian = round(100 * sum(asian, na.rm = T)/sum(!is.na(race))),
+    pct_black = round(100 * sum(black, na.rm = T)/sum(!is.na(race))),
+    pct_native = round(100 * sum(native, na.rm = T)/sum(!is.na(race))),
+    pct_islander = round(100 * sum(islander, na.rm = T)/sum(!is.na(race))),
+    # total n identified as latino divided by total reported latino status
+    pct_latino = round(100 * sum(latino, na.rm = T)/sum(!is.na(latino))),
+    education = round(mean(yrs.education, na.rm = T))
+    ) %>%
+  merge(s2.rt.pearson, by = "test_id") %>%
+  merge(s2.rt.spearman, by = "test_id") %>%
+  merge(s2.acc.pearson, by = "test_id") %>%
+  merge(s2.acc.spearman, by = "test_id")
+```
+
+
+# 4. Split-half Correlation by Anxiety Level
+
+When we looked at split-half correlation of RT-based threat facilitation scores across anxiety levels, we did not see any evidence for higher correlation in high anxiety participants based on generalized anxiety or hypervigilance scores in the top quartile (all negative correlations that are likely due to chance and not interpretable: whole sample: rP(1838) = -.11; high generalized anxiety: rP(252) = -.3; top quartile of hypervigilance: rP(453) = -.002). 
+
+We did, however, find significant split-half correlations for participants in the top decile of hypervigilance scores (rP(166) = .17, ρ = .29, 95% CI = .04-.48,  p < .05), though this split-half correlation was no longer different from zero when we used a nonparametric approach (rS(166) = .03, ρ = .06, 95% CI = .00-.35, p = .67). 
+
+```{r correlation-anxiety-levels}
+# Split-half Pearson correlation 
+
+# Whole sample
+cor.test(s2.half.stats$TC.TIC.1.rt, s2.half.stats$TC.TIC.2.rt) # r = -0.11 *** t = -4.61, df = 1838 CI: [-0.152, -0.061]
+# Severe GAD
+cor.test(s2.half.gad.SEVERE$TC.TIC.1.rt, s2.half.gad.SEVERE$TC.TIC.2.rt) # r = -0.31 *** t = -5.19, df = 252  CI: [-0.418, -0.195]
+# Top Quartile BHS
+cor.test(s2.half.bhs.topQuartile$TC.TIC.1.rt, s2.half.bhs.topQuartile$TC.TIC.2.rt) # r = -0.002, ns, t = -0.04, df = 453, CI: [-0.094,  0.090]
+# Top Decile BHS
+cor.test(s2.half.bhs.topDecile$TC.TIC.1.rt, s2.half.bhs.topDecile$TC.TIC.2.rt) # r = .17 *, t = 2.25, df = 166, CI: [0.021, 0.316]
+
+# Split-half Spearman correlation - Top Decile BHS
+cor.test(s2.half.bhs.topDecile$TC.TIC.1.rt, s2.half.bhs.topDecile$TC.TIC.2.rt, method = "spearman") # r = .17 *, t = 2.25, df = 166, CI: [0.021, 0.316]
+spearmanCI(s2.half.bhs.topDecile$TC.TIC.1.rt,
+           s2.half.bhs.topDecile$TC.TIC.2.rt, level = 0.95, method = "Euclidean", plot = FALSE) # r = .033, CI [-0.14, 0.21]
+```
+
+
+# 5. Split-half Correlation for Top Decile of BHS
+
+For the sample where overall correlation was significantly nonzero (top decile of BHS), we then looked at the split-half correlation of RT-based threat facilitation scores across all eight task versions within this group. In two of eight versions, split-half correlation was significantly different from zero. One version had horizontally-oriented faces as stimuli with 900 ms SOA (rP(22) = .73, ρ = .84, 95% CI = .64-.93, p <.001, version 12). The second version had horizontally-oriented scenes as stimuli with 500 ms SOA (rP(26) = .42, ρ = .59, 95% CI = .12-.82, p < .05, version 14).
+
+```{r correlation-topDecileBHS}
+# ---- PEARSON -----
+# Split half PEARSON Correlation of threat facilitation RT scores, by version, among those within the top decile of BHS
+s2.bhs.topDecile.rt.pearson <- s2.half.bhs.topDecile %>%
+  group_by(test_id) %>%
+  summarise(
+    n.rt.pearson = n(),
+    r.rt.pearson = cor(TC.TIC.1.rt, TC.TIC.2.rt),
+    r.rt.pearson.lower = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$conf.int[1], 2),
+    r.rt.pearson.upper = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$conf.int[2], 2),
+    rho.rt.pearson = ifelse(r.rt.pearson > 0, (2*r.rt.pearson)/(1+r.rt.pearson), 0), 
+    rho.rt.pearson.lower = round(ifelse(r.rt.pearson.lower > 0, (2*r.rt.pearson.lower)/(1+r.rt.pearson.lower), 0), 2),
+    rho.rt.pearson.upper = round(ifelse(r.rt.pearson.upper > 0, (2*r.rt.pearson.upper)/(1+r.rt.pearson.upper), 0), 2),
+    p.rt.pearson = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$p.value, 4),
+    p.rt.pearson.star = ifelse(p.rt.pearson < .001, "***",
+                        ifelse(p.rt.pearson < .01, "** ",
+                        ifelse(p.rt.pearson < .05, "*  ", "   "))))
+```
+
+
+# 6. Split-half Correlation of Version 11
+
+Finally, we looked at split-half correlations among anxious participants for the version of the emotional dot probe task that showed nonzero split-half correlation in both Study 1 and Study 2, including when using Spearman rank order correlations to estimate reliability. 
+
+This version did not show a significant split-half correlation among participants with high generalized anxiety symptoms (rP(35) = .18, ρ = .31, 95% CI = .00-.64, p = .29) or the top decile of BHS scores (rP(21) = .28, ρ = .44, 95% CI = .00-.77, p = .19). 
+
+Split-half correlations were significant among participants in the top quartile of BHS scores (rP(53) = .42, ρ = .59, 95% CI = .29-.76, p < .01), although this was no longer significant when using Spearman correlations (rS(53) = .19, ρ = .32, 95% CI = .00-.66, p = .16). 
+
+```{r version-11}
+# Split half Pearson correlation among people with severe GAD, in version 11 
+s2.half.v11.gad7.SEVERE <- s2.half.gad.SEVERE %>%
+  filter(test_id == 11) %>%
+  summarise(    
+    n.rt.pearson = n(),
+    r.rt.pearson = cor(TC.TIC.1.rt, TC.TIC.2.rt),
+    r.rt.pearson.lower = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$conf.int[1], 2),
+    r.rt.pearson.upper = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$conf.int[2], 2),
+    rho.rt.pearson = ifelse(r.rt.pearson > 0, (2*r.rt.pearson)/(1+r.rt.pearson), 0), 
+    rho.rt.pearson.lower = round(ifelse(r.rt.pearson.lower > 0, (2*r.rt.pearson.lower)/(1+r.rt.pearson.lower), 0), 2),
+    rho.rt.pearson.upper = round(ifelse(r.rt.pearson.upper > 0, (2*r.rt.pearson.upper)/(1+r.rt.pearson.upper), 0), 2),
+    p.rt.pearson = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$p.value, 4),
+    p.rt.pearson.star = ifelse(p.rt.pearson < .001, "***",
+                        ifelse(p.rt.pearson < .01, "** ",
+                        ifelse(p.rt.pearson < .05, "*  ", "   "))))
+
+# Split half Pearson correlation among people with top quartile BHS, in version 11 
+s2.half.v11.bhs.topQuartile <- s2.half.bhs.topQuartile %>%
+  filter(test_id == 11) %>%
+  summarise(    
+    n.rt.pearson = n(),
+    r.rt.pearson = cor(TC.TIC.1.rt, TC.TIC.2.rt),
+    r.rt.pearson.lower = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$conf.int[1], 2),
+    r.rt.pearson.upper = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$conf.int[2], 2),
+    rho.rt.pearson = ifelse(r.rt.pearson > 0, (2*r.rt.pearson)/(1+r.rt.pearson), 0), 
+    rho.rt.pearson.lower = round(ifelse(r.rt.pearson.lower > 0, (2*r.rt.pearson.lower)/(1+r.rt.pearson.lower), 0), 2),
+    rho.rt.pearson.upper = round(ifelse(r.rt.pearson.upper > 0, (2*r.rt.pearson.upper)/(1+r.rt.pearson.upper), 0), 2),
+    p.rt.pearson = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$p.value, 4),
+    p.rt.pearson.star = ifelse(p.rt.pearson < .001, "***",
+                        ifelse(p.rt.pearson < .01, "** ",
+                        ifelse(p.rt.pearson < .05, "*  ", "   "))))
+# Split half SPEARMAN correlation among people with top quartile BHS, in version 11 
+spearmanCI(s2.half.bhs.topQuartile[s2.half.bhs.topQuartile$test_id == 11,]$TC.TIC.1.rt,
+           s2.half.bhs.topQuartile[s2.half.bhs.topQuartile$test_id == 11,]$TC.TIC.2.rt, level = 0.95, method = "Euclidean", plot = FALSE) # r = .19, CI [-0.11, 0.49]
+cor.test(s2.half.bhs.topQuartile[s2.half.bhs.topQuartile$test_id == 11,]$TC.TIC.1.rt,
+         s2.half.bhs.topQuartile[s2.half.bhs.topQuartile$test_id == 11,]$TC.TIC.2.rt, method = "spearman") # p = .167
+
+
+# Split half correlation among people with top decile BHS, in version 11 
+s2.half.v11.bhs.topDecile <- s2.half.bhs.topDecile %>%
+  filter(test_id == 11) %>%
+  summarise(    
+    n.rt.pearson = n(),
+    r.rt.pearson = cor(TC.TIC.1.rt, TC.TIC.2.rt),
+    r.rt.pearson.lower = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$conf.int[1], 2),
+    r.rt.pearson.upper = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$conf.int[2], 2),
+    rho.rt.pearson = ifelse(r.rt.pearson > 0, (2*r.rt.pearson)/(1+r.rt.pearson), 0), 
+    rho.rt.pearson.lower = round(ifelse(r.rt.pearson.lower > 0, (2*r.rt.pearson.lower)/(1+r.rt.pearson.lower), 0), 2),
+    rho.rt.pearson.upper = round(ifelse(r.rt.pearson.upper > 0, (2*r.rt.pearson.upper)/(1+r.rt.pearson.upper), 0), 2),
+    p.rt.pearson = round(cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$p.value, 4),
+    p.rt.pearson.star = ifelse(p.rt.pearson < .001, "***",
+                        ifelse(p.rt.pearson < .01, "** ",
+                        ifelse(p.rt.pearson < .05, "*  ", "   "))))
+```
+
+
+# 7. Plot Figure 4
+
+## 7.1 Figure 4a GAD-7 Distribution
+
+```{r gad-distribution}
+# GAD7 Distribution
+ggplot(s2.outcomes, aes(x = gad7, fill = gad7_2lvl)) +
+  geom_histogram(alpha = 0.9, color = "white", aes(y = ..count../sum(..count..)), binwidth = 1, show.legend = FALSE) + 
+  scale_fill_manual(values = c(colors[2], colors[1])) +
+  scale_x_continuous(breaks = c(0,5,10,15,21), limits = c(-0.5, 21.5)) +
+  scale_y_continuous(limits = c(0, 0.13), breaks = c(0, 0.05, 0.1), labels = c("0%", "5%", "10%")) +
+  labs(title = "(a) Distribution of Generalized Anxiety Level", subtitle = "Whole Sample",
+       x = "Generalized Anxiety Level", y = "Proportion of Participant") +
+  geom_vline(xintercept = 4.5, linetype = 2) +
+  geom_vline(xintercept = 9.5, linetype = 2) +
+  geom_vline(xintercept = 14.5) +
+  theme_bw() +
+  annotate("text", x = 2, y = 0.12, label = "Minimal\nN = 672", size = 3.5) +
+  annotate("text", x = 7, y = 0.12, label = "Mild\nN = 606", size = 3.5) +
+  annotate("text", x = 12, y = 0.12, label = "Moderate\nN = 307", size = 3.5) +
+  annotate("text", x = 18.5, y = 0.12, label = "Severe\nN = 254", size = 3.5)
+# ggsave("figures/s2_figure_4a_GAD7_distribution.png", plot = last_plot(), width = 5.5, height=3.7)
+```
+
+## 7.2 Figure 4b BHS Distribution
+
+```{r bhs-distribution}
+# BHS Distribution
+ggplot(s2.outcomes, aes(x = bhs, fill = bhs_4lvl_high)) +
+  geom_histogram(alpha = 0.9, aes(y = ..count../sum(..count..)), color = "white", binwidth = 100/20, show.legend = FALSE) +
+  scale_fill_manual(values = c(colors[2], colors[1])) +
+  labs(title = "(b) Distribution of Hypervigilance Level", subtitle = "Whole Sample",
+       x = "Hypervigilance Level", y = "Proportion of Participant") +
+  scale_y_continuous(limits = c(0, 0.155),breaks = c(0, 0.05, 0.1, 0.15), labels = c("0%", "5%", "10%", "15%")) +
+  scale_x_continuous(breaks = 0:10*10) +
+  geom_vline(xintercept = 7.5, linetype = 2) +
+  geom_vline(xintercept = 22.5, linetype = 2) +
+  geom_vline(xintercept = 42.5) +
+  theme_bw() +
+  annotate("text", x = 0, y = 0.143, label = "1st\nQuartile\nN = 363", size = 3.3) +
+  annotate("text", x = 15, y = 0.143, label = "2nd\nQuartile\nN=540", size = 3.3) +
+  annotate("text", x = 32.5, y = 0.143, label = "3rd\nQuartile\nN = 481", size = 3.3) +
+  annotate("text", x = 72, y = 0.143, label = "4th\nQuartile\nN = 455", size = 3.3) + 
+  annotate("rect", xmin = 67.5, xmax = 102.5, ymin = 0, ymax=0.105, alpha = .2, fill = colors[1]) +
+  annotate("text", x = 84, y = 0.085, label = "Top Decile\nN = 168", size = 3.3) 
+# ggsave("figures/s2_figure_4b_BHS_distribution.png", plot = last_plot(), width = 5.5, height=3.7)
+```
+
+## 7.3 Figure 4c Violin 
+```{r violin-plot}
+combined <- rbind(s2.outcomes %>% filter(bhs_10lvl_high == "high") %>% mutate(group = "2.bhs.top.decile"),
+                  s2.outcomes %>% filter(bhs_4lvl_high == "high") %>% mutate(group = "1.bhs.top.quartile"),
+                  s2.outcomes %>% filter(gad7_2lvl == "high") %>% mutate(group = "0.high.gad7"))
+ggplot(combined, aes(x = group, y = TC.TIC.rt, fill=group)) +  
+  geom_violin(alpha = 0.6) +
+  scale_fill_manual(values = c(colors[1], colors[2], colors[3])) +
+  geom_boxplot(width = 0.1, outlier.size = .2, alpha = 0.6) +
+  scale_x_discrete(labels = c('Severe \nGeneralized Anxiety', 'Top Quartile \nHypervigilance', 'Top Decile \nHypervigilance'), position = "bottom") +
+  labs(title = "(c) Threat Facilitation RT Score", 
+       subtitle = "By Group", 
+       x = '', y = 'Threat Facilitation RT Score') + 
+  theme_bw() +
+  theme(legend.position = "none")
+# ggsave("figures/s2_figure_4c_violin.png", plot = last_plot(), width=5.5, height = 3.9)
+```
+
+## 7.4 Figure 4d Split-half, severe GAD
+
+```{r plot-rb-severeGAD}
+# create a df for annotated text for plotting reliability for severe GAD7
+s2.gad.SEVERE.pearson <- s2.half.gad.SEVERE %>%
+  summarise(n = n(),
+            r = cor(TC.TIC.1.rt, TC.TIC.2.rt),
+            p = cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$p.value,
+            p.star = ifelse(p < .001, "***",
+                     ifelse(p < .01, "** ",
+                     ifelse(p < .05, "*  ", "   "))))
+
+# Plot reliability of TF RT Score with severe GAD7 
+ggplot(s2.half.gad.SEVERE, aes(x = TC.TIC.1.rt, y = TC.TIC.2.rt)) +
+  geom_point(alpha = 0.3, size = 2.8, color = colors[1]) + 
+  geom_abline(slope = 0.67, size = 1, linetype = 2) +
+  theme_bw() +
+  scale_x_continuous(breaks = -6:6*100, expand = c(0,0)) +
+  scale_y_continuous(breaks = -10:5*100, expand = c(0,0)) +
+  coord_cartesian(ylim = c(-300, 300), xlim = c(-300, 300)) +
+  geom_smooth(method = lm, color = colors[1]) +  
+  geom_text(data = s2.gad.SEVERE.pearson, size = 4.5, color = colors[1],
+            mapping = aes(x = 200,
+                          y = 270,
+                          label = paste0("r (", n-2, ") = ", round(r, 2)))) +
+  labs(title = "(d) Split-half Correlation of Threat Facilitation RT Score", 
+         subtitle = "Severe Generalized Anxiety Group",
+         x = "Threat Facilitation RT Score on Odd Trials", y = "Threat Facilitation RT Score on Even Trials") +
+  theme(plot.margin = margin(0.3,0.5,0.3,0.3, "cm"),
+        plot.title = element_text(size = 12))
+# ggsave("figures/s2_figure_4d_split-half_severeGAD.png", plot = last_plot(), width = 5, height = 5.2)
+```
+
+## 7.5 Figure 4e Split-half, top quartile BHS
+
+```{r plot-rb-topQuartileBHS}
+# create a df for annotated text for plotting reliability for top QUARTILE BHS
+s2.bhs.topQuartile.pearson <- s2.half.bhs.topQuartile %>%
+  summarise(n = n(),
+            r = cor(TC.TIC.1.rt, TC.TIC.2.rt),
+            p = cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$p.value,
+            p.star = ifelse(p < .001, "***",
+                     ifelse(p < .01, "** ",
+                     ifelse(p < .05, "*  ", "   "))))
+
+# Plot reliability of TF RT Score with top quartile BHS
+ggplot(s2.half.bhs.topQuartile, aes(x = TC.TIC.1.rt, y = TC.TIC.2.rt)) +
+  geom_point(alpha = 0.3, size = 2.8, color = colors[1]) + 
+  geom_abline(slope = 0.67, size = 1, linetype = 2) +
+  theme_bw() +
+  scale_x_continuous(breaks = -5:5*100, expand = c(0,0)) +
+  scale_y_continuous(breaks = -5:5*100, expand = c(0,0)) +
+  coord_cartesian(ylim = c(-300, 300), xlim = c(-300, 300)) +
+  stat_smooth(method = lm, color = colors[1]) +  
+  geom_text(data = s2.bhs.topQuartile.pearson, size = 4.5, color = colors[1],
+            mapping = aes(x = 200,
+                          y = 270,
+                          label = paste0("r (", n-2, ") = ", format(round(r, 2), nsmall = 2)))) +
+    labs(title = "(e) Split-half Correlation of Threat Facilitation RT Score", 
+         subtitle = "Top Quartile Hypervigilance Group", 
+         x = "Threat Facilitation RT Score on Odd Trials", y = "Threat Facilitation RT Score on Even Trials") +
+  theme(plot.margin = margin(0.3,0.5,0.3,0.3, "cm"),
+        plot.title = element_text(size = 12))
+# ggsave("figures/s2_figure_4e_split-half_topQuartileBHS.png", plot = last_plot(), width = 5, height = 5.2)
+```
+
+## 7.6 Figure 4f Split-half, top decile BHS
+
+```{r plot-rb-topDecileBHS}
+# create a df for annotated text for plotting reliability for top DECILE BHS
+s2.bhs.topDecile.pearson <- s2.half.bhs.topDecile %>%
+  summarise(n = n(),
+            r = cor(TC.TIC.1.rt, TC.TIC.2.rt),
+            p = cor.test(TC.TIC.1.rt, TC.TIC.2.rt)$p.value,
+            p.star = ifelse(p < .001, "***",
+                     ifelse(p < .01, "** ",
+                     ifelse(p < .05, "*  ", "   "))))
+
+# Plot reliability of TF RT Score with top DECILE BHS - IN USE
+ggplot(s2.half.bhs.topDecile, aes(x = TC.TIC.1.rt, y = TC.TIC.2.rt)) +
+  geom_point(alpha = 0.3, size = 2.8, color = colors[1]) + 
+  geom_abline(slope = 0.67, size = 1, linetype = 2) +
+  theme_bw() +
+  scale_x_continuous(breaks = -5:5*100, limits = c(-300, 300), expand = c(0,0)) +
+  scale_y_continuous(breaks = -5:5*100, limits = c(-300, 300), expand = c(0,0)) +
+  stat_smooth(method = lm, fullrange= TRUE, color = colors[1]) +  
+  geom_text(data = s2.bhs.topDecile.pearson, size = 4.5, color = colors[1],
+            mapping = aes(x = 200,
+                          y = 270,
+                          label = paste0("r (", n-2, ") = ", round(r, 2)))) +
+    labs(title = "(f) Split-half Correlation of Threat Facilitation RT Score", 
+         subtitle = "Top Decile Hypervigilance Group", 
+         x = "Threat Facilitation RT Score on Odd Trials", y = "Threat Facilitation RT Score on Even Trials") +
+  theme(plot.margin = margin(0.3,0.5,0.3,0.3, "cm"),
+        plot.title = element_text(size = 12))
+# ggsave("figures/s2_figure_4f_split-half_topDecileBHS.png", plot = last_plot(), width = 5, height = 5.2)
+```
+
